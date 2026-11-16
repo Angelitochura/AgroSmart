@@ -6,8 +6,9 @@ const Crop = require('../models/Crop');
 const getOrders = async (req, res) => {
   try {
     const orders = await Order.find({})
-      .populate('crop', 'name')
-      .populate('buyer', 'name')
+      .populate('crop', 'name pricePerUnit unit')
+      .populate('buyer', 'name email')
+      .populate('farmer', 'name email')
       .sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
@@ -19,18 +20,29 @@ const getOrders = async (req, res) => {
 // @route   POST /api/orders
 const createOrder = async (req, res) => {
   try {
-    const { cropId, cropName, quantity, unitPrice, totalPrice, buyerName, notes } = req.body;
+    const { cropId, crop, quantity, totalPrice, notes } = req.body;
+    const targetCropId = cropId || crop;
+
+    const foundCrop = await Crop.findById(targetCropId);
+    if (!foundCrop) {
+      return res.status(404).json({ message: 'Producto / cultivo no encontrado' });
+    }
+
+    const qty = Number(quantity);
+    const calculatedTotal = totalPrice !== undefined
+      ? Number(totalPrice)
+      : qty * (Number(foundCrop.pricePerUnit) || 0);
+
     const order = await Order.create({
-      crop: cropId,
-      cropName,
-      buyer: req.user?._id,
-      buyerName: buyerName || req.user?.name || 'Comprador',
-      quantity: Number(quantity),
-      unitPrice: Number(unitPrice),
-      totalPrice: Number(totalPrice),
+      buyer: req.user._id,
+      crop: foundCrop._id,
+      farmer: foundCrop.user || foundCrop.farmer,
+      quantity: qty,
+      totalPrice: calculatedTotal,
       notes,
       status: 'Pendiente'
     });
+
     res.status(201).json(order);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -52,10 +64,10 @@ const updateOrderStatus = async (req, res) => {
 
     // Descontar stock disponible del cultivo si se aprueba por primera vez
     if (previousStatus !== 'Aprobado' && order.status === 'Aprobado' && order.crop) {
-      const crop = await Crop.findById(order.crop);
-      if (crop && crop.availableQuantity >= order.quantity) {
-        crop.availableQuantity -= order.quantity;
-        await crop.save();
+      const foundCrop = await Crop.findById(order.crop);
+      if (foundCrop && foundCrop.availableQuantity >= order.quantity) {
+        foundCrop.availableQuantity -= order.quantity;
+        await foundCrop.save();
       }
     }
 
